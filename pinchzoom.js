@@ -3,6 +3,9 @@ var Swipe = require('swipe');
 var Stepper = require('stepper');
 var checkImageLoaded = require('./checkImageLoaded');
 var clone = require('./cloneObject');
+var mergeTo = require('./mergeObjectTo');
+
+var defaultZoominScale = 1.2;
 
 var wrapCss = {
     position: 'absolute',
@@ -22,7 +25,7 @@ var stepper = new Stepper();
 var zoomBezier = [0.445, 0.05, 0.55, 0.95], zoomAnimationDuration = 400;
 
 /**
- * Ja el ir string, tad uzskatam, ka tas ir image
+ * Ja el ir string, tad uzskatām, ka tas ir image
  */
 function createPinchElement(el, doneCb) {
     
@@ -67,20 +70,21 @@ function progressToValue(progress, from, to) {
     return from + progressToDelta(progress, from, to)
 }
 
-function animateZoomTo(current, newScale, sourceX, sourceY, stateChangeCb) {
+function animateZoomTo(start, newScale, sourceX, sourceY, stateChangeCb) {
     stepper.run(zoomAnimationDuration, zoomBezier, function(p){
+
         if (newScale > 1) {
             stateChangeCb({
-                scale: current.scale + progressToDelta(p, current.scale, newScale),
-                x: -sourceX * progressToDelta(p, current.scale, newScale),
-                y: -sourceY * progressToDelta(p, current.scale, newScale)
+                scale: start.scale + progressToDelta(p, start.scale, newScale),
+                x: -sourceX * progressToDelta(p, start.scale, newScale),
+                y: -sourceY * progressToDelta(p, start.scale, newScale)
             })
         }
         else {
             stateChangeCb({
-                scale: progressToValue(p, current.scale, newScale),
-                x: progressToValue(p, current.x, current.baseX),
-                y: progressToValue(p, current.y, current.baseY)
+                scale: progressToValue(p, start.scale, newScale),
+                x: progressToValue(p, start.x, start.baseX),
+                y: progressToValue(p, start.y, start.baseY)
             })
         }
 
@@ -89,11 +93,11 @@ function animateZoomTo(current, newScale, sourceX, sourceY, stateChangeCb) {
     })
 }
 
-function animateXYTo(current, x, y, stateChangeCb) {
+function animateXYTo(start, x, y, stateChangeCb) {
     stepper.run(150, zoomBezier, function(p){
         stateChangeCb({
-            x: progressToValue(p, current.x, x),
-            y: progressToValue(p, current.y, y)
+            x: progressToValue(p, start.x, x),
+            y: progressToValue(p, start.y, y)
         })
     }, function(){
 
@@ -108,19 +112,41 @@ function setTransformXY($el, x, y) {
     $el.css('transform', 'translate('+x+'px,'+y+'px)')
 }
 
-function calcMoveOffsetValue(current, offset, width, containerWidth) {
-    var brakeX = 0;
-    if (current + offset > 0) {
-        brakeX = (current + offset) / 1.9;
-    }
+/**
+ * 
+ */
+function fitinvalue(value, width, min, max, log) {
 
-    if (width + (current + offset) < containerWidth) {
-        brakeX = -(containerWidth - (width + (current + offset))) / 1.9;
+    var brake = 0;
+    if (value > min) {
+        brake = (value - min) * 0.84;
     }
-
     
+    if (width < max) {
 
-    return (current + offset) - brakeX;
+    }
+    else {
+        if (value + width < max) {
+            brake = ((value + width) - max) * 0.84;
+        }    
+    }
+
+    return value - brake;
+}
+
+function toggleScale(scale) {
+    return scale > 1 ? 1 : defaultZoominScale
+}
+
+function formatOffset(data) {
+    return {
+        x: data.left,
+        y: data.top
+    }
+}
+
+function getElementOffset(el) {
+    return $(el).offset()
 }
 
 function createPinchzoom(pinchEl, pinchContainer) {
@@ -134,23 +160,50 @@ function createPinchzoom(pinchEl, pinchContainer) {
         baseX: 0, 
         baseY: 0,
 
+        pinchEl: {
+            width: 0,
+            height: 0
+        },
+
         getWidth: function(){
-            return this.container.width * this.scale
+            return this.pinchEl.width * this.scale
         },
         getHeight: function(){
-            return this.container.height * this.scale
+            return this.pinchEl.height * this.scale
         },
 
         container: {
+            /**
+             * @todo Vajag čekot offset izmaiņas. Ja container ir position:fixed, tad scroll top ietekmē offset.y
+             */
+            offset: formatOffset(getElementOffset(pinchContainer)),
             width: $(pinchContainer).width(),
             height: $(pinchContainer).height()
         }
     };
 
+    function applyNewState(newState) {
+        newState = mergeTo(newState, current);
+
+        if (newState.scale != current.scale) {
+            setTransformScale(elements.scale, newState.scale);
+        }
+
+        if (newState.x != current.x || newState.y != current.y) {
+            setTransformXY(elements.translateXY, newState.x, newState.y);
+        }
+
+        current = newState;
+    }
+
     createPinchElement(pinchEl, function($pinchEl){
         elements = createElements($pinchEl);
 
-        elements.wrap.appendTo(pinchContainer)
+        elements.wrap.appendTo(pinchContainer);
+
+
+        current.pinchEl.width = $pinchEl.width();
+        current.pinchEl.height = $pinchEl.height();
     });
 
     var swipe = new Swipe(pinchContainer, {
@@ -160,49 +213,51 @@ function createPinchzoom(pinchEl, pinchContainer) {
     })
     
     swipe.on('doubletap', function(t){
-        /**
-         * @todo Vēl vajadzētu čekot Viewport scroll top
-         */
-        animateZoomTo(clone(current), current.scale > 1 ? 1 : 2, t.x, t.y, function(newState){
-            current.scale = newState.scale;
-            current.x = newState.x;
-            current.y = newState.y;
-
-            setTransformScale(elements.scale, current.scale);
-            setTransformXY(elements.translateXY, current.x, current.y);
-        })
+        animateZoomTo(current, toggleScale(current.scale), t.x - current.container.offset.x, t.y - current.container.offset.y, applyNewState)
     })
 
     swipe.on('move', function(t){
 
         setTransformXY(
             elements.translateXY, 
-            calcMoveOffsetValue(current.x, t.offset.x, current.getWidth(), current.container.width), 
-            calcMoveOffsetValue(current.y, t.offset.y, current.getHeight(), current.container.height)
+            fitinvalue(current.x + t.offset.x, current.getWidth(), 0, current.container.width),
+            fitinvalue(current.y + t.offset.y, current.getHeight(), 0, current.container.height, true)
         )
 
     })
 
     swipe.on('end', function(t){
-        current.x = calcMoveOffsetValue(current.x, t.offset.x, current.getWidth(), current.container.width);
-        current.y = calcMoveOffsetValue(current.y, t.offset.y, current.getHeight(), current.container.height);
+        
+        current.x = fitinvalue(current.x + t.offset.x, current.getWidth(), 0, current.container.width);
+        current.y = fitinvalue(current.y + t.offset.y, current.getHeight(), 0, current.container.height);
 
         
         if (current.scale == 1) {
-            animateXYTo(clone(current), current.baseX, current.baseY, function(newState){
-                current.x = newState.x;
-                current.y = newState.y;
-
-                setTransformXY(elements.translateXY, current.x, current.y)
-            });
+            animateXYTo(current, current.baseX, current.baseY, applyNewState);
         }
         else {
-            animateXYTo(clone(current), current.x > 0 ? 0 : current.x, current.baseY > 0 ? 0 : current.baseY, function(newState){
-                current.x = newState.x;
-                current.y = newState.y;
 
-                setTransformXY(elements.translateXY, current.x, current.y)
-            });
+
+            var newX = current.x, newY = current.y;
+
+
+            if (current.x > 0) {
+                newX = 0;
+            }
+            
+            if (current.y > 0) {
+                newY = 0;
+            }
+            
+            if (current.x + current.getWidth() < current.container.width) {
+                newX = current.container.width - current.getWidth(); 
+            }
+
+            if (current.y + current.getHeight() < current.container.height) {
+                newY = current.container.height - current.getHeight()
+            }
+
+            animateXYTo(current, newX, newY, applyNewState);
         }
         
     })
