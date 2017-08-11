@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1.0, user-scalable=0">
+    <title>Pinchzoom</title>
+    <style>
+        body, html {
+            height: 100%;
+            padding: 0;
+            margin: 0;
+        }
+        .container {
+            max-width: 600px;
+            max-height: 600px;
+
+            height: 80%;
+
+            position: relative;
+            box-sizing: border-box;
+
+            margin: 0 auto;
+
+            
+
+            background: gray;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+        }
+        
+    </style>
+</head>
+<body>
+    <div class="container"></div>
+
+    <script src="../build/pinchzoom.min.js"></script>
+    <script>
+        new webit.pinchzoom(
+            'https://c1.staticflickr.com/3/2859/32924770393_384a76c13e.jpg', 
+            document.getElementsByClassName('container')[0]
+        )
+    </script>
+    
+</body>
+</html>
