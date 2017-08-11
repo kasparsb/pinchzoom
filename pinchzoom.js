@@ -109,6 +109,26 @@ function animateXYTo(start, x, y, stateChangeCb) {
     });
 }
 
+function handleMove(current, offset, stateChangeCb) {
+    stateChangeCb({
+        x: fitinvalue(current.x, offset.x, current.getWidth(), 0, current.container.width, 0.84),
+        y: fitinvalue(current.y, offset.y, current.getHeight(), 0, current.container.height, 0.84)
+    })
+}
+
+function handleMoveEnd(current, stateChangeCb) {
+    // Nostiprinām current xy koordinātes ar move koordinātēm
+    current.x = current.move.x;
+    current.y = current.move.y;
+        
+    animateXYTo(
+        current, 
+        constrain(current.x, current.getWidth(), 0, current.container.width),
+        constrain(current.y, current.getHeight(), 0, current.container.height),
+        stateChangeCb
+    );
+}
+
 function setTransformScale($el, scale) {
     $el.css('transform', 'scale('+scale+')')
 }
@@ -260,6 +280,16 @@ function createPinchzoom(pinchEl, pinchContainer) {
         current = newState;
     }
 
+    function applyNewMoveState(newState) {
+        current.move = mergeTo(newState, current.move);
+
+        setTransformXY(
+            elements.translateXY, 
+            current.move.x,
+            current.move.y
+        )
+    }
+
     createPinchElement(pinchEl, function($pinchEl){
         elements = createElements($pinchEl);
 
@@ -281,28 +311,45 @@ function createPinchzoom(pinchEl, pinchContainer) {
     })
 
     swipe.on('move', function(t){
-        current.move.x = fitinvalue(current.x, t.offset.x, current.getWidth(), 0, current.container.width, 0.84);
-        current.move.y = fitinvalue(current.y, t.offset.y, current.getHeight(), 0, current.container.height, 0.84);
-
-        setTransformXY(
-            elements.translateXY, 
-            current.move.x,
-            current.move.y
-        )
+        handleMove(current, t.offset, applyNewMoveState);
     })
 
     swipe.on('end', function(t){
-        // Nostiprinām current xy koordinātes ar move koordinātēm
-        current.x = current.move.x;
-        current.y = current.move.y;
-        
-        animateXYTo(
-            current, 
-            constrain(current.x, current.getWidth(), 0, current.container.width),
-            constrain(current.y, current.getHeight(), 0, current.container.height),
-            applyNewState
-        );
-        
+        if (t.isSwipe) {
+            // Taisām kinetic movement tādā pašā virzienā kā notika kustība
+            console.log(current.x, current.x + t.offset.x)
+            console.log(current.y, current.y + t.offset.y)
+
+            // Aprēķinām hipotenūzu
+            var hipotenuza = Math.sqrt(Math.abs(t.offset.x*t.offset.x) + Math.abs(t.offset.y*t.offset.y));
+            // Aprēķinām leņķi
+            var angle = Math.abs(t.offset.y) / hipotenuza;
+
+            var newh, newy, newx;
+            stepper.run(150, [0.455, 0.03, 0.515, 0.955], function(p){
+                
+                // Jaunā hipotenūza
+                newh = hipotenuza + (hipotenuza*2)*p;
+                // Jaunais y
+                newy = newh * angle;
+                // Jaunais x
+                newx = Math.sqrt(newh*newh - newy*newy);
+
+
+                handleMove(current, {
+                    x: t.offset.x < 0 ? -1*newx : newx,
+                    y: t.offset.y < 0 ? -1*newy : newy
+                }, applyNewMoveState);
+
+
+            }, function(){
+                handleMoveEnd(current, applyNewState);
+            });
+
+        }
+        else {
+            handleMoveEnd(current, applyNewState);
+        }
     })
 
     
@@ -314,3 +361,15 @@ function createPinchzoom(pinchEl, pinchContainer) {
 
 
 module.exports = createPinchzoom;
+
+
+
+/**
+ * @todo
+ * Image src set. Ielādēt scale atbilstošo attēla izmēru. Tas uzlabos move perfomanci
+ * Pārsaukt fitinvalue funkciju
+ * Pārsaukt constrain funkciju
+ * Optimālas pozīcijas uzlikšana uz animateZoom
+ * Centrēšana
+ * Kinetic move
+ */
