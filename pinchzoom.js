@@ -5,7 +5,7 @@ var checkImageLoaded = require('./checkImageLoaded');
 var clone = require('./cloneObject');
 var mergeTo = require('./mergeObjectTo');
 
-var defaultZoominScale = 1.2;
+var defaultZoominScale = 5;
 
 var wrapCss = {
     position: 'absolute',
@@ -115,23 +115,60 @@ function setTransformXY($el, x, y) {
 /**
  * 
  */
-function fitinvalue(value, width, min, max, log) {
+function fitinvalue(value, valueOffset, width, min, max, log) {
 
     var brake = 0;
-    if (value > min) {
-        brake = (value - min) * 0.84;
-    }
-    
-    if (width < max) {
 
+    // Scenārijs, kad vērtība ietilpst ietilpst rāmjos
+    if (width <= max) {
+        // Ejam uz pozitīvo pusi un uzsākot bijām negatīvajā. Ļaujam iziet no negatīvā nebremzējot
+        if (value <= min && (value + valueOffset) > min) {
+            brake = ((value + valueOffset) - min) * 0.84;
+        }
+
+        // Ejam uz pozitīvo pusi un uzsākot arī bijām pozitīvajā
+        if (value >= min && (value + valueOffset) > min) {
+            brake = ((value + valueOffset) - min) * 0.84;
+        }
+
+
+        // Ejam uz negatīvo pusi un uzsākot bijām pozitīvajā, ļaujam iziet no pozitīvā nebmrezējot
+        if (value >= min && (value + valueOffset) < min) {
+            brake = ((value + valueOffset) - min) * 0.84;
+        }
+
+        // Ja esam negatīvajā un turpinām iet negatīvajā dziļāk, tad arī bremzējam
+        if (value <= min && (value + valueOffset) < value) {
+            brake = ((value + valueOffset) - value) * 0.84;
+        }
+
+        // Ja esam pozitīvajā un turpinām iet pozitīvajā dziļāk, tad arī bremzējam
+        if (value >= min && (value + valueOffset) > value) {
+            brake = ((value + valueOffset) - value) * 0.84;
+        }
+        
     }
     else {
-        if (value + width < max) {
-            brake = ((value + width) - max) * 0.84;
-        }    
+        if (value < min && (value + valueOffset) > min) {
+            brake = ((value + valueOffset) - min) * 0.84;
+        }
+
+        // Sākām kā virs min un turpinām iet augstāk, tad bremzējam
+        if (value > min && (value + valueOffset) > value) {
+            brake = ((value + valueOffset) - value) * 0.84;
+        }
+
+        if ((value + width) >= max && ((value + valueOffset) + width) < max) {
+            brake = ((value + valueOffset + width) - max) * 0.84;
+        }
+
+        // Sākām kā zem max un turpinām iet zemāk, tad bremzējam
+        if ((value + width) < max && (value + valueOffset + width) < (value + width)) {
+            brake = ((value + valueOffset + width) - (value + width)) * 0.84;
+        }
     }
 
-    return value - brake;
+    return (value + valueOffset) - brake;
 }
 
 function toggleScale(scale) {
@@ -217,48 +254,51 @@ function createPinchzoom(pinchEl, pinchContainer) {
     })
 
     swipe.on('move', function(t){
+        //console.log('move', t.offset.y, current.y, t.offset.y+current.y, fitinvalue(current.y + t.offset.y, current.getHeight(), 0, current.container.height, true));
+
+        console.log('move', current.x, current.y)
 
         setTransformXY(
             elements.translateXY, 
-            fitinvalue(current.x + t.offset.x, current.getWidth(), 0, current.container.width),
-            fitinvalue(current.y + t.offset.y, current.getHeight(), 0, current.container.height, true)
+            fitinvalue(current.x, t.offset.x, current.getWidth(), 0, current.container.width),
+            fitinvalue(current.y, t.offset.y, current.getHeight(), 0, current.container.height, true)
         )
 
     })
 
     swipe.on('end', function(t){
         
-        current.x = fitinvalue(current.x + t.offset.x, current.getWidth(), 0, current.container.width);
-        current.y = fitinvalue(current.y + t.offset.y, current.getHeight(), 0, current.container.height);
+        current.x = fitinvalue(current.x, t.offset.x, current.getWidth(), 0, current.container.width);
+        current.y = fitinvalue(current.y, t.offset.y, current.getHeight(), 0, current.container.height);
 
         
-        if (current.scale == 1) {
-            animateXYTo(current, current.baseX, current.baseY, applyNewState);
-        }
-        else {
+        // if (current.scale == 1) {
+        //     animateXYTo(current, current.baseX, current.baseY, applyNewState);
+        // }
+        // else {
 
 
-            var newX = current.x, newY = current.y;
+        //     var newX = current.x, newY = current.y;
 
 
-            if (current.x > 0) {
-                newX = 0;
-            }
+        //     if (current.x > 0) {
+        //         newX = 0;
+        //     }
             
-            if (current.y > 0) {
-                newY = 0;
-            }
+        //     if (current.y > 0) {
+        //         newY = 0;
+        //     }
             
-            if (current.x + current.getWidth() < current.container.width) {
-                newX = current.container.width - current.getWidth(); 
-            }
+        //     if (current.x + current.getWidth() < current.container.width) {
+        //         newX = current.container.width - current.getWidth(); 
+        //     }
 
-            if (current.y + current.getHeight() < current.container.height) {
-                newY = current.container.height - current.getHeight()
-            }
+        //     if (current.y + current.getHeight() < current.container.height) {
+        //         newY = current.container.height - current.getHeight()
+        //     }
 
-            animateXYTo(current, newX, newY, applyNewState);
-        }
+        //     animateXYTo(current, newX, newY, applyNewState);
+        // }
         
     })
 
