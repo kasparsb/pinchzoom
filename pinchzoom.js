@@ -94,6 +94,11 @@ function animateZoomTo(start, newScale, sourceX, sourceY, stateChangeCb) {
 }
 
 function animateXYTo(start, x, y, stateChangeCb) {
+    // Ja nav izmaiņu neko nedarām
+    if (start.x == x && start.y == y) {
+        return;
+    }
+
     stepper.run(150, zoomBezier, function(p){
         stateChangeCb({
             x: progressToValue(p, start.x, x),
@@ -112,10 +117,33 @@ function setTransformXY($el, x, y) {
     $el.css('transform', 'translate('+x+'px,'+y+'px)')
 }
 
+function constrain(value, width, min, max) {
+
+    // Scenārijs, kad vērtība ietilpst ietilpst rāmjos
+    if (width <= max) {
+        
+        if (value != min) {
+            return min;
+        }
+        
+    }
+    else {
+        if (value > min) {
+            return min;
+        }
+
+        if (value + width < max) {
+            return max - width;
+        }
+    }
+
+    return value;
+}
+
 /**
  * 
  */
-function fitinvalue(value, valueOffset, width, min, max, log) {
+function fitinvalue(value, valueOffset, width, min, max, elasticity, log) {
 
     var brake = 0;
 
@@ -123,48 +151,42 @@ function fitinvalue(value, valueOffset, width, min, max, log) {
     if (width <= max) {
         // Ejam uz pozitīvo pusi un uzsākot bijām negatīvajā. Ļaujam iziet no negatīvā nebremzējot
         if (value <= min && (value + valueOffset) > min) {
-            brake = ((value + valueOffset) - min) * 0.84;
+            brake = ((value + valueOffset) - min) * elasticity;
         }
-
-        // Ejam uz pozitīvo pusi un uzsākot arī bijām pozitīvajā
-        if (value >= min && (value + valueOffset) > min) {
-            brake = ((value + valueOffset) - min) * 0.84;
-        }
-
 
         // Ejam uz negatīvo pusi un uzsākot bijām pozitīvajā, ļaujam iziet no pozitīvā nebmrezējot
         if (value >= min && (value + valueOffset) < min) {
-            brake = ((value + valueOffset) - min) * 0.84;
+            brake = ((value + valueOffset) - min) * elasticity;
         }
 
         // Ja esam negatīvajā un turpinām iet negatīvajā dziļāk, tad arī bremzējam
         if (value <= min && (value + valueOffset) < value) {
-            brake = ((value + valueOffset) - value) * 0.84;
+            brake = ((value + valueOffset) - value) * elasticity;
         }
 
         // Ja esam pozitīvajā un turpinām iet pozitīvajā dziļāk, tad arī bremzējam
         if (value >= min && (value + valueOffset) > value) {
-            brake = ((value + valueOffset) - value) * 0.84;
+            brake = ((value + valueOffset) - value) * elasticity;
         }
         
     }
     else {
-        if (value < min && (value + valueOffset) > min) {
-            brake = ((value + valueOffset) - min) * 0.84;
+        if (value <= min && (value + valueOffset) > min) {
+            brake = ((value + valueOffset) - min) * elasticity;
         }
 
         // Sākām kā virs min un turpinām iet augstāk, tad bremzējam
         if (value > min && (value + valueOffset) > value) {
-            brake = ((value + valueOffset) - value) * 0.84;
+            brake = ((value + valueOffset) - value) * elasticity;
         }
 
         if ((value + width) >= max && ((value + valueOffset) + width) < max) {
-            brake = ((value + valueOffset + width) - max) * 0.84;
+            brake = ((value + valueOffset + width) - max) * elasticity;
         }
 
         // Sākām kā zem max un turpinām iet zemāk, tad bremzējam
         if ((value + width) < max && (value + valueOffset + width) < (value + width)) {
-            brake = ((value + valueOffset + width) - (value + width)) * 0.84;
+            brake = ((value + valueOffset + width) - (value + width)) * elasticity;
         }
     }
 
@@ -193,6 +215,11 @@ function createPinchzoom(pinchEl, pinchContainer) {
         // Tekošās x un y koordinātes
         x: 0, 
         y: 0, 
+        // Move event vērtības. Move vērtības ir vēl neapstiprinātās
+        move: {
+            x: 0,
+            y: 0
+        },
         // Bāzes x un y koordinātes, kuras tiek uzstādīta sākuma pazīcijai
         baseX: 0, 
         baseY: 0,
@@ -254,51 +281,27 @@ function createPinchzoom(pinchEl, pinchContainer) {
     })
 
     swipe.on('move', function(t){
-        //console.log('move', t.offset.y, current.y, t.offset.y+current.y, fitinvalue(current.y + t.offset.y, current.getHeight(), 0, current.container.height, true));
-
-        console.log('move', current.x, current.y)
+        current.move.x = fitinvalue(current.x, t.offset.x, current.getWidth(), 0, current.container.width, 0.84);
+        current.move.y = fitinvalue(current.y, t.offset.y, current.getHeight(), 0, current.container.height, 0.84);
 
         setTransformXY(
             elements.translateXY, 
-            fitinvalue(current.x, t.offset.x, current.getWidth(), 0, current.container.width),
-            fitinvalue(current.y, t.offset.y, current.getHeight(), 0, current.container.height, true)
+            current.move.x,
+            current.move.y
         )
-
     })
 
     swipe.on('end', function(t){
+        // Nostiprinām current xy koordinātes ar move koordinātēm
+        current.x = current.move.x;
+        current.y = current.move.y;
         
-        current.x = fitinvalue(current.x, t.offset.x, current.getWidth(), 0, current.container.width);
-        current.y = fitinvalue(current.y, t.offset.y, current.getHeight(), 0, current.container.height);
-
-        
-        // if (current.scale == 1) {
-        //     animateXYTo(current, current.baseX, current.baseY, applyNewState);
-        // }
-        // else {
-
-
-        //     var newX = current.x, newY = current.y;
-
-
-        //     if (current.x > 0) {
-        //         newX = 0;
-        //     }
-            
-        //     if (current.y > 0) {
-        //         newY = 0;
-        //     }
-            
-        //     if (current.x + current.getWidth() < current.container.width) {
-        //         newX = current.container.width - current.getWidth(); 
-        //     }
-
-        //     if (current.y + current.getHeight() < current.container.height) {
-        //         newY = current.container.height - current.getHeight()
-        //     }
-
-        //     animateXYTo(current, newX, newY, applyNewState);
-        // }
+        animateXYTo(
+            current, 
+            constrain(current.x, current.getWidth(), 0, current.container.width),
+            constrain(current.y, current.getHeight(), 0, current.container.height),
+            applyNewState
+        );
         
     })
 
