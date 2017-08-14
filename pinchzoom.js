@@ -6,29 +6,27 @@ var clone = require('./cloneObject');
 var mergeTo = require('./mergeObjectTo');
 var getFitDimensions = require('./getFitDimensions');
 
-var defaultZoominScale = 5;
+var defaultZoominScale = 3;
 
 var stepper = new Stepper();
 
 var zoomBezier = [0.445, 0.05, 0.55, 0.95], zoomAnimationDuration = 400;
 
-/**
- * Ja el ir string, tad uzskatām, ka tas ir image
- */
 function createPinchElement(el, doneCb) {
-    //if (isImage(el)) {
+    
+    if (typeof el == 'string') {
         checkImageLoaded($('<img />').attr('src', el), function($el, width, height){
             
             doneCb($el.get(0), width, height)
         })    
-    //}
+    }
 }
 
-function createElements(pinchElement) {
+function createElements() {
 
     var $scale = $('<div />').css({
         transformOrigin: '0 0'
-    }).append(pinchElement);
+    });
     
     var $translateXY = $('<div />').append($scale);
 
@@ -43,34 +41,21 @@ function createElements(pinchElement) {
     }).append($translateXY);
 
     return {
-        el: pinchElement,
         scale: $scale.get(0),
         translateXY: $translateXY.get(0),
         wrap: $wrap.get(0)
     }
 }
 
-function setPinchElementBaseDimensions(elements, current) {
-    $(elements.el).css({
-        width: current.pinchElement.width,
-        height: current.pinchElement.height,
+function createSwipe(el, callbacks) {
+    new Swipe(el, {
+        disablePinch: true, 
+        alwaysPreventTouchStart: true, 
+        direction: 'vertical horizontal'
     })
-
-    setTransformXY(elements.translateXY, current.baseX, current.baseY);
-}
-
-/**
- * Aprēķinām skaitlisko delta no vienas vērtības līdz otrai
- * @param number progress 0..1
- * @param number Skaitliskā vērtība no kuras sākam
- * @param number Skaitliskā vērtība līdz kurai jāiet
- */
-function progressToDelta(progress, from, to) {
-    return (to - from) * progress;
-}
-
-function progressToValue(progress, from, to) {
-    return from + progressToDelta(progress, from, to)
+    .on('doubletap', callbacks.doubletap)
+    .on('move', callbacks.move)
+    .on('end', callbacks.end)
 }
 
 function animateZoomTo(start, newScale, sourceX, sourceY, stateChangeCb) {
@@ -104,7 +89,7 @@ function animateXYTo(start, x, y, stateChangeCb) {
         return;
     }
 
-    stepper.run(150, zoomBezier, function(p){
+    stepper.run(150, [0.23, 1, 0.32, 1], function(p){
         stateChangeCb({
             x: progressToValue(p, start.x, x),
             y: progressToValue(p, start.y, y)
@@ -119,6 +104,35 @@ function handleMove(current, offset, stateChangeCb) {
         x: fitinvalue(current.x, offset.x, current.getWidth(), 0, current.container.width, current.baseX, 0.84),
         y: fitinvalue(current.y, offset.y, current.getHeight(), 0, current.container.height, current.baseY, 0.84)
     })
+}
+
+function handleSwipeEnd(current, offset, stateChangeCb, doneCb) {
+    // Taisām kinetic movement tādā pašā virzienā kā notika kustība
+                
+    // Aprēķinām hipotenūzu
+    var hipotenuza = Math.sqrt(Math.abs(offset.x*offset.x) + Math.abs(offset.y*offset.y));
+    // Aprēķinām leņķi
+    var angle = Math.abs(offset.y) / hipotenuza;
+
+    var newh, newy, newx;
+
+    stepper.run(1000, [0.23, 1, 0.32, 1], function(p){
+        
+        // Jaunā hipotenūza
+        newh = hipotenuza + (hipotenuza)*p;
+        // Jaunais y
+        newy = newh * angle;
+        // Jaunais x
+        newx = Math.sqrt(newh*newh - newy*newy);
+
+
+        handleMove(current, {
+            x: offset.x < 0 ? -1*newx : newx,
+            y: offset.y < 0 ? -1*newy : newy
+        }, stateChangeCb);
+
+
+    }, doneCb);
 }
 
 function handleMoveEnd(current, stateChangeCb) {
@@ -140,6 +154,20 @@ function setTransformScale(el, scale) {
 
 function setTransformXY(el, x, y) {
     $(el).css('transform', 'translate('+x+'px,'+y+'px)')
+}
+
+/**
+ * Aprēķinām skaitlisko delta no vienas vērtības līdz otrai
+ * @param number progress 0..1
+ * @param number Skaitliskā vērtība no kuras sākam
+ * @param number Skaitliskā vērtība līdz kurai jāiet
+ */
+function progressToDelta(progress, from, to) {
+    return (to - from) * progress;
+}
+
+function progressToValue(progress, from, to) {
+    return from + progressToDelta(progress, from, to)
 }
 
 /**
@@ -247,9 +275,17 @@ function getHeight(el) {
     return $(el).height()
 }
 
+function getFormattedContainerDimensions(el) {
+    return {
+        offset: formatOffset(getElementOffset(el)),
+        width: getWidth(el),
+        height: getHeight(el)
+    }
+}
+
 function createPinchzoom(pinchElement, pinchContainer) {
 
-    var elements, current = {
+    var current = {
         scale: 1, 
         // Tekošās x un y koordinātes
         x: 0, 
@@ -263,16 +299,18 @@ function createPinchzoom(pinchElement, pinchContainer) {
         baseX: 0, 
         baseY: 0,
 
-        pinchElement: {
-            width: 0,
-            height: 0
-        },
+        // Ja pinch element ir image, tad šie ir īstie attēla izmēri
+        naturalWidth: 0,
+        naturalHeight: 0,
+
+        width: 0,
+        height: 0,
 
         getWidth: function(){
-            return this.pinchElement.width * this.scale
+            return this.width * this.scale
         },
         getHeight: function(){
-            return this.pinchElement.height * this.scale
+            return this.height * this.scale
         },
 
         container: {
@@ -306,96 +344,111 @@ function createPinchzoom(pinchElement, pinchContainer) {
         )
     }
 
-    createPinchElement(pinchElement, function(pinchElement, width, height){
-        
-        elements = createElements(pinchElement);
-        $(elements.wrap).appendTo(pinchContainer);
-
-        current.container = {
-            /**
-             * @todo Vajag čekot offset izmaiņas. Ja container ir position:fixed, tad scroll.top ietekmē offset.y
-             */
-            offset: formatOffset(getElementOffset(pinchContainer)),
-            width: getWidth(pinchContainer),
-            height: getHeight(pinchContainer)
-        }
+    function handleResize() {
+        current.container = getFormattedContainerDimensions(pinchContainer);
 
         var d = getFitDimensions(
-            width, 
-            height, 
+            current.naturalWidth, 
+            current.naturalHeight, 
             current.container.width, 
             current.container.height
         )
 
-        current.pinchElement.width = d.width;
-        current.pinchElement.height = d.height;
+        $(elements.el).css({
+            width: d.width,
+            height: d.height,
+        })
 
-        current.baseX = d.xOffset;
-        current.baseY = d.yOffset;
+        applyNewState({
+            width: d.width,
+            height: d.height,
 
-        current.x = current.baseX;
-        current.y = current.baseY;
+            baseX: d.xOffset,
+            baseY: d.yOffset,
 
-        
-        setPinchElementBaseDimensions(elements, current);
-        
-    });
+            x: d.xOffset,
+            y: d.yOffset
+        })
+    }
 
-    var swipe = new Swipe(pinchContainer, {
-        disablePinch: true, 
-        alwaysPreventTouchStart: true, 
-        direction: 'vertical horizontal'
-    })
-    
-    swipe.on('doubletap', function(t){
-        animateZoomTo(current, toggleScale(current.scale), t.x - current.container.offset.x, t.y - current.container.offset.y, applyNewState)
-    })
-
-    swipe.on('move', function(t){
-        handleMove(current, t.offset, applyNewMoveState);
-    })
-
-    swipe.on('end', function(t){
-        
-        if (0 && t.Swipe) {
-            // Taisām kinetic movement tādā pašā virzienā kā notika kustība
-            
-            // Aprēķinām hipotenūzu
-            var hipotenuza = Math.sqrt(Math.abs(t.offset.x*t.offset.x) + Math.abs(t.offset.y*t.offset.y));
-            // Aprēķinām leņķi
-            var angle = Math.abs(t.offset.y) / hipotenuza;
-
-            var newh, newy, newx;
-            stepper.run(150, [0.455, 0.03, 0.515, 0.955], function(p){
-                
-                // Jaunā hipotenūza
-                newh = hipotenuza + (hipotenuza*2)*p;
-                // Jaunais y
-                newy = newh * angle;
-                // Jaunais x
-                newx = Math.sqrt(newh*newh - newy*newy);
-
-
-                handleMove(current, {
-                    x: t.offset.x < 0 ? -1*newx : newx,
-                    y: t.offset.y < 0 ? -1*newy : newy
-                }, applyNewMoveState);
-
-
-            }, function(){
+    createSwipe(pinchContainer, {
+        doubletap: function(t){
+            animateZoomTo(current, toggleScale(current.scale), t.x - current.container.offset.x, t.y - current.container.offset.y, applyNewState)
+        },
+        move: function(t){
+            handleMove(current, t.offset, applyNewMoveState);
+        },
+        end: function(t){
+            if (t.isSwipe) {
+                handleSwipeEnd(current, t.offset, applyNewMoveState, function(){
+                    handleMoveEnd(current, applyNewState);
+                })
+            }
+            else {
                 handleMoveEnd(current, applyNewState);
-            });
+            }
+        }
+    })    
 
-        }
-        else {
-            handleMoveEnd(current, applyNewState);
-        }
-    })
+
+    var elements = createElements();
+    $(elements.wrap).appendTo(pinchContainer);
+
+
+    createPinchElement(pinchElement, function(el, width, height){
+        elements.el = el;
+
+        // Ieliekam pinch elementu
+        $(elements.scale).html(elements.el);
+        
+        // Pieglabājam pinch elementa dabīgos izmērus
+        current.naturalWidth = width;
+        current.naturalHeight = height;
+
+        handleResize();
+    });
 
     
     // return public API
     return {
+        /**
+         * Replace pinch element
+         */
+        replace: function(newPinchElement) {
+
+            createPinchElement(newPinchElement, function(pinchElement, width, height){
         
+                elements.el = pinchElement;
+
+                $(elements.scale).html(elements.el);
+                
+                current.scale = 1;
+                current.naturalWidth = width;
+                current.naturalHeight = height;
+
+                handleResize();
+            });
+
+        },
+
+        /**
+         * Allow only zoomed move
+         */
+
+        /**
+         * Adjust to changes sizes
+         */
+        resize: function() {
+            handleResize()
+        },
+
+        disable: function() {
+
+        },
+
+        enable: function() {
+
+        }
     }
 }
 
