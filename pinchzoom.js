@@ -4,21 +4,9 @@ var Stepper = require('stepper');
 var checkImageLoaded = require('./checkImageLoaded');
 var clone = require('./cloneObject');
 var mergeTo = require('./mergeObjectTo');
+var getFitDimensions = require('./getFitDimensions');
 
 var defaultZoominScale = 5;
-
-var wrapCss = {
-    position: 'absolute',
-    left: 0,
-    top: 0,
-    right: 0,
-    bottom: 0,
-    overflow: 'hidden'
-}
-
-var scaleElCss = {
-    transformOrigin: '0 0'
-}
 
 var stepper = new Stepper();
 
@@ -28,32 +16,47 @@ var zoomBezier = [0.445, 0.05, 0.55, 0.95], zoomAnimationDuration = 400;
  * Ja el ir string, tad uzskatām, ka tas ir image
  */
 function createPinchElement(el, doneCb) {
-    
-    checkImageLoaded($('<img />').attr('src', el), function($el, width, height){
-        $el.css({
-            maxWidth: '100%',
-            height: 'auto',
-            display: 'block'
-        })
-
-        doneCb($el)
-    })
-
+    //if (isImage(el)) {
+        checkImageLoaded($('<img />').attr('src', el), function($el, width, height){
+            
+            doneCb($el.get(0), width, height)
+        })    
+    //}
 }
 
-function createElements($pinchEl) {
+function createElements(pinchElement) {
+
+    var $scale = $('<div />').css({
+        transformOrigin: '0 0'
+    }).append(pinchElement);
+    
+    var $translateXY = $('<div />').append($scale);
 
     // wrap - ieņem visu container elementu
-
-    var $scale = $('<div />').css(scaleElCss).append($pinchEl);
-    var $translateXY = $('<div />').append($scale);
-    var $wrap = $('<div />').css(wrapCss).append($translateXY);
+    var $wrap = $('<div />').css({
+        position: 'absolute',
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+        overflow: 'hidden'
+    }).append($translateXY);
 
     return {
-        scale: $scale,
-        translateXY: $translateXY,
-        wrap: $wrap
+        el: pinchElement,
+        scale: $scale.get(0),
+        translateXY: $translateXY.get(0),
+        wrap: $wrap.get(0)
     }
+}
+
+function setPinchElementBaseDimensions(elements, current) {
+    $(elements.el).css({
+        width: current.pinchElement.width,
+        height: current.pinchElement.height,
+    })
+
+    setTransformXY(elements.translateXY, current.baseX, current.baseY);
 }
 
 /**
@@ -71,16 +74,18 @@ function progressToValue(progress, from, to) {
 }
 
 function animateZoomTo(start, newScale, sourceX, sourceY, stateChangeCb) {
+    
     stepper.run(zoomAnimationDuration, zoomBezier, function(p){
-
+        
         if (newScale > 1) {
             stateChangeCb({
                 scale: start.scale + progressToDelta(p, start.scale, newScale),
-                x: -sourceX * progressToDelta(p, start.scale, newScale),
-                y: -sourceY * progressToDelta(p, start.scale, newScale)
+                x: (start.x + (start.x * progressToDelta(p, start.scale, newScale))) - (sourceX * progressToDelta(p, start.scale, newScale)),
+                y: (start.y + (start.y * progressToDelta(p, start.scale, newScale))) - (sourceY * progressToDelta(p, start.scale, newScale))
             })
         }
         else {
+
             stateChangeCb({
                 scale: progressToValue(p, start.scale, newScale),
                 x: progressToValue(p, start.x, start.baseX),
@@ -111,8 +116,8 @@ function animateXYTo(start, x, y, stateChangeCb) {
 
 function handleMove(current, offset, stateChangeCb) {
     stateChangeCb({
-        x: fitinvalue(current.x, offset.x, current.getWidth(), 0, current.container.width, 0.84),
-        y: fitinvalue(current.y, offset.y, current.getHeight(), 0, current.container.height, 0.84)
+        x: fitinvalue(current.x, offset.x, current.getWidth(), 0, current.container.width, current.baseX, 0.84),
+        y: fitinvalue(current.y, offset.y, current.getHeight(), 0, current.container.height, current.baseY, 0.84)
     })
 }
 
@@ -123,27 +128,30 @@ function handleMoveEnd(current, stateChangeCb) {
         
     animateXYTo(
         current, 
-        constrain(current.x, current.getWidth(), 0, current.container.width),
-        constrain(current.y, current.getHeight(), 0, current.container.height),
+        constrain(current.x, current.getWidth(), 0, current.container.width, current.baseX),
+        constrain(current.y, current.getHeight(), 0, current.container.height, current.baseY),
         stateChangeCb
     );
 }
 
-function setTransformScale($el, scale) {
-    $el.css('transform', 'scale('+scale+')')
+function setTransformScale(el, scale) {
+    $(el).css('transform', 'scale('+scale+')')
 }
 
-function setTransformXY($el, x, y) {
-    $el.css('transform', 'translate('+x+'px,'+y+'px)')
+function setTransformXY(el, x, y) {
+    $(el).css('transform', 'translate('+x+'px,'+y+'px)')
 }
 
-function constrain(value, width, min, max) {
+/**
+ * @todo Pārsaukt
+ */
+function constrain(value, width, min, max, minBase) {
 
     // Scenārijs, kad vērtība ietilpst ietilpst rāmjos
     if (width <= max) {
         
-        if (value != min) {
-            return min;
+        if (value != minBase) {
+            return minBase;
         }
         
     }
@@ -161,14 +169,18 @@ function constrain(value, width, min, max) {
 }
 
 /**
- * 
+ * @todo Pārsaukt
+ * minBase tiek izmantots gadījumos, ja elements tiem centrēs 
+ * container elementā un tas nepārsniedz container robežas
  */
-function fitinvalue(value, valueOffset, width, min, max, elasticity, log) {
+function fitinvalue(value, valueOffset, width, min, max, minBase, elasticity, log) {
 
     var brake = 0;
 
     // Scenārijs, kad vērtība ietilpst ietilpst rāmjos
     if (width <= max) {
+        min = Math.max(min, minBase);
+
         // Ejam uz pozitīvo pusi un uzsākot bijām negatīvajā. Ļaujam iziet no negatīvā nebremzējot
         if (value <= min && (value + valueOffset) > min) {
             brake = ((value + valueOffset) - min) * elasticity;
@@ -188,7 +200,6 @@ function fitinvalue(value, valueOffset, width, min, max, elasticity, log) {
         if (value >= min && (value + valueOffset) > value) {
             brake = ((value + valueOffset) - value) * elasticity;
         }
-        
     }
     else {
         if (value <= min && (value + valueOffset) > min) {
@@ -219,8 +230,8 @@ function toggleScale(scale) {
 
 function formatOffset(data) {
     return {
-        x: data.left,
-        y: data.top
+        x: data ? data.left : 0,
+        y: data ? data.top : 0
     }
 }
 
@@ -228,7 +239,15 @@ function getElementOffset(el) {
     return $(el).offset()
 }
 
-function createPinchzoom(pinchEl, pinchContainer) {
+function getWidth(el) {
+    return $(el).width()
+}
+
+function getHeight(el) {
+    return $(el).height()
+}
+
+function createPinchzoom(pinchElement, pinchContainer) {
 
     var elements, current = {
         scale: 1, 
@@ -244,25 +263,22 @@ function createPinchzoom(pinchEl, pinchContainer) {
         baseX: 0, 
         baseY: 0,
 
-        pinchEl: {
+        pinchElement: {
             width: 0,
             height: 0
         },
 
         getWidth: function(){
-            return this.pinchEl.width * this.scale
+            return this.pinchElement.width * this.scale
         },
         getHeight: function(){
-            return this.pinchEl.height * this.scale
+            return this.pinchElement.height * this.scale
         },
 
         container: {
-            /**
-             * @todo Vajag čekot offset izmaiņas. Ja container ir position:fixed, tad scroll top ietekmē offset.y
-             */
-            offset: formatOffset(getElementOffset(pinchContainer)),
-            width: $(pinchContainer).width(),
-            height: $(pinchContainer).height()
+            offset: formatOffset(undefined),
+            width: 0,
+            height: 0
         }
     };
 
@@ -290,14 +306,39 @@ function createPinchzoom(pinchEl, pinchContainer) {
         )
     }
 
-    createPinchElement(pinchEl, function($pinchEl){
-        elements = createElements($pinchEl);
+    createPinchElement(pinchElement, function(pinchElement, width, height){
+        
+        elements = createElements(pinchElement);
+        $(elements.wrap).appendTo(pinchContainer);
 
-        elements.wrap.appendTo(pinchContainer);
+        current.container = {
+            /**
+             * @todo Vajag čekot offset izmaiņas. Ja container ir position:fixed, tad scroll.top ietekmē offset.y
+             */
+            offset: formatOffset(getElementOffset(pinchContainer)),
+            width: getWidth(pinchContainer),
+            height: getHeight(pinchContainer)
+        }
 
+        var d = getFitDimensions(
+            width, 
+            height, 
+            current.container.width, 
+            current.container.height
+        )
 
-        current.pinchEl.width = $pinchEl.width();
-        current.pinchEl.height = $pinchEl.height();
+        current.pinchElement.width = d.width;
+        current.pinchElement.height = d.height;
+
+        current.baseX = d.xOffset;
+        current.baseY = d.yOffset;
+
+        current.x = current.baseX;
+        current.y = current.baseY;
+
+        
+        setPinchElementBaseDimensions(elements, current);
+        
     });
 
     var swipe = new Swipe(pinchContainer, {
@@ -315,11 +356,10 @@ function createPinchzoom(pinchEl, pinchContainer) {
     })
 
     swipe.on('end', function(t){
-        if (t.isSwipe) {
+        
+        if (0 && t.Swipe) {
             // Taisām kinetic movement tādā pašā virzienā kā notika kustība
-            console.log(current.x, current.x + t.offset.x)
-            console.log(current.y, current.y + t.offset.y)
-
+            
             // Aprēķinām hipotenūzu
             var hipotenuza = Math.sqrt(Math.abs(t.offset.x*t.offset.x) + Math.abs(t.offset.y*t.offset.y));
             // Aprēķinām leņķi
@@ -370,6 +410,5 @@ module.exports = createPinchzoom;
  * Pārsaukt fitinvalue funkciju
  * Pārsaukt constrain funkciju
  * Optimālas pozīcijas uzlikšana uz animateZoom
- * Centrēšana
  * Kinetic move
  */
