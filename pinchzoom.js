@@ -55,6 +55,7 @@ function createSwipe(el, callbacks) {
     })
     .on('doubletap', callbacks.doubletap)
     .on('move', callbacks.move)
+    .on('start', callbacks.start)
     .on('end', callbacks.end)
 }
 
@@ -99,6 +100,12 @@ function animateXYTo(start, x, y, stateChangeCb) {
     });
 }
 
+function handleTouchStart() {
+    if (stepper.isRunning()) {
+        stepper.stop();
+    }
+}
+
 function handleMove(current, offset, stateChangeCb) {
     stateChangeCb({
         x: fitinvalue(current.x, offset.x, current.getWidth(), 0, current.container.width, current.baseX, 0.84),
@@ -116,7 +123,7 @@ function handleSwipeEnd(current, offset, stateChangeCb, doneCb) {
 
     var newh, newy, newx;
 
-    stepper.run(1000, [0.23, 1, 0.32, 1], function(p){
+    stepper.run(2000, [0.23, 1, 0.32, 1], function(p){
         
         // Jaunā hipotenūza
         newh = hipotenuza + (hipotenuza)*p;
@@ -377,6 +384,9 @@ function createPinchzoom(pinchElement, pinchContainer) {
         },
         move: function(t){
             handleMove(current, t.offset, applyNewMoveState);
+        },
+        start: function() {
+            handleTouchStart();
         },
         end: function(t){
             if (t.isSwipe) {
