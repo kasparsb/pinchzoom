@@ -6,7 +6,7 @@ var clone = require('./cloneObject');
 var mergeTo = require('./mergeObjectTo');
 var getFitDimensions = require('./getFitDimensions');
 
-var defaultZoominScale = 3;
+var defaultZoominScale = 4;
 
 var stepper = new Stepper();
 
@@ -57,10 +57,11 @@ function createSwipe(el, callbacks) {
     .on('move', callbacks.move)
     .on('start', callbacks.start)
     .on('end', callbacks.end)
+    .on('touchend', callbacks.touchend)
 }
 
 function animateZoomTo(start, newScale, sourceX, sourceY, stateChangeCb) {
-    
+
     stepper.run(zoomAnimationDuration, zoomBezier, function(p){
         
         if (newScale > 1) {
@@ -79,31 +80,24 @@ function animateZoomTo(start, newScale, sourceX, sourceY, stateChangeCb) {
             })
         }
 
-    }, function(){
-
     })
 }
 
 function animateXYTo(start, x, y, stateChangeCb) {
+    console.log('animateXYTo', start.x == x, start.y == y);
     // Ja nav izmaiņu neko nedarām
     if (start.x == x && start.y == y) {
         return;
     }
 
-    stepper.run(150, [0.23, 1, 0.32, 1], function(p){
+    console.log('animateXYTo start');
+
+    stepper.run(1000, [0.23, 1, 0.32, 1], function(p){
         stateChangeCb({
             x: progressToValue(p, start.x, x),
             y: progressToValue(p, start.y, y)
         })
-    }, function(){
-
     });
-}
-
-function handleTouchStart() {
-    if (stepper.isRunning()) {
-        stepper.stop();
-    }
 }
 
 function handleMove(current, offset, stateChangeCb) {
@@ -113,9 +107,9 @@ function handleMove(current, offset, stateChangeCb) {
     })
 }
 
-function handleSwipeEnd(current, offset, stateChangeCb, doneCb) {
+function handleSwipeEnd(current, offset, stateChangeCb, doneCb, forceStopCb) {
     // Taisām kinetic movement tādā pašā virzienā kā notika kustība
-                
+            
     // Aprēķinām hipotenūzu
     var hipotenuza = Math.sqrt(Math.abs(offset.x*offset.x) + Math.abs(offset.y*offset.y));
     // Aprēķinām leņķi
@@ -123,8 +117,12 @@ function handleSwipeEnd(current, offset, stateChangeCb, doneCb) {
 
     var newh, newy, newx;
 
-    stepper.run(2000, [0.23, 1, 0.32, 1], function(p){
+    console.log('kineticswipe');
+
+    stepper.run(3000, [0.23, 1, 0.32, 1], function(p){
         
+        console.log('kineticswipe step');
+
         // Jaunā hipotenūza
         newh = hipotenuza + (hipotenuza)*p;
         // Jaunais y
@@ -139,7 +137,7 @@ function handleSwipeEnd(current, offset, stateChangeCb, doneCb) {
         }, stateChangeCb);
 
 
-    }, doneCb);
+    }, doneCb, forceStopCb);
 }
 
 function handleMoveEnd(current, stateChangeCb) {
@@ -147,12 +145,32 @@ function handleMoveEnd(current, stateChangeCb) {
     current.x = current.move.x;
     current.y = current.move.y;
         
+    handleEnd(current, stateChangeCb);
+    // animateXYTo(
+    //     current, 
+    //     constrain(current.x, current.getWidth(), 0, current.container.width, current.baseX),
+    //     constrain(current.y, current.getHeight(), 0, current.container.height, current.baseY),
+    //     stateChangeCb
+    // );
+}
+
+function handleEnd(current, stateChangeCb) {
     animateXYTo(
         current, 
         constrain(current.x, current.getWidth(), 0, current.container.width, current.baseX),
         constrain(current.y, current.getHeight(), 0, current.container.height, current.baseY),
         stateChangeCb
     );
+}
+
+/**
+ * Move end bez snap in place animācijas. Atstājam tur, kur palika
+ */
+function handleMoveEndForced(current, stateChangeCb) {
+    stateChangeCb({
+        x: current.move.x,
+        y: current.move.y
+    })
 }
 
 function setTransformScale(el, scale) {
@@ -378,6 +396,7 @@ function createPinchzoom(pinchElement, pinchContainer) {
         })
     }
 
+    var isForcedEnd = false;
     createSwipe(pinchContainer, {
         doubletap: function(t){
             animateZoomTo(current, toggleScale(current.scale), t.x - current.container.offset.x, t.y - current.container.offset.y, applyNewState)
@@ -386,17 +405,41 @@ function createPinchzoom(pinchElement, pinchContainer) {
             handleMove(current, t.offset, applyNewMoveState);
         },
         start: function() {
-            handleTouchStart();
+            // Ja notiek animācija (span in place, kinetic move), tad tā šeit tiks pārtraukta
+            console.log('start');
+            if (stepper.isRunning()) {
+                console.log('forcestop');
+                isForcedEnd = true;
+                stepper.forceStop();
+            }
         },
         end: function(t){
-            if (t.isSwipe) {
+            console.log('end');
+            isForcedEnd = false;
+            if (1 || t.isSwipe) {
+                // Swipe end notiek ar span in place animāciju
                 handleSwipeEnd(current, t.offset, applyNewMoveState, function(){
+                    console.log('normalend')
+                    //isForcedEnd = false;
                     handleMoveEnd(current, applyNewState);
+                }, function(){
+                    console.log('forced end')
+                    isForcedEnd = true;
+                    handleMoveEndForced(current, applyNewState);
                 })
             }
             else {
+                //isForcedEnd = false;
                 handleMoveEnd(current, applyNewState);
             }
+        },
+        touchend: function(t) {
+            console.log('touchend', isForcedEnd);
+            if (isForcedEnd) {
+                handleEnd(current, applyNewState);
+                isForcedEnd = false;
+            }
+            
         }
     })    
 
