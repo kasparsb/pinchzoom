@@ -84,15 +84,12 @@ function animateZoomTo(start, newScale, sourceX, sourceY, stateChangeCb) {
 }
 
 function animateXYTo(start, x, y, stateChangeCb) {
-    console.log('animateXYTo', start.x == x, start.y == y);
     // Ja nav izmaiņu neko nedarām
     if (start.x == x && start.y == y) {
         return;
     }
 
-    console.log('animateXYTo start');
-
-    stepper.run(1000, [0.23, 1, 0.32, 1], function(p){
+    stepper.run(700, [0.23, 1, 0.32, 1], function(p){
         stateChangeCb({
             x: progressToValue(p, start.x, x),
             y: progressToValue(p, start.y, y)
@@ -101,13 +98,20 @@ function animateXYTo(start, x, y, stateChangeCb) {
 }
 
 function handleMove(current, offset, stateChangeCb) {
+    var x = fitinvalue(current.x, offset.x, current.getWidth(), 0, current.container.width, current.baseX, 0.84);
+    var y = fitinvalue(current.y, offset.y, current.getHeight(), 0, current.container.height, current.baseY, 0.84, true);
+
+    //console.log('move', x, current.x+offset.x);
+
     stateChangeCb({
-        x: fitinvalue(current.x, offset.x, current.getWidth(), 0, current.container.width, current.baseX, 0.84),
-        y: fitinvalue(current.y, offset.y, current.getHeight(), 0, current.container.height, current.baseY, 0.84)
+        x: x,
+        y: y
     })
 }
 
-function handleSwipeEnd(current, offset, stateChangeCb, doneCb, forceStopCb) {
+function handleSwipeEnd(current, offset, speed, stateChangeCb, doneCb, forceStopCb) {
+    console.log('handleSwipeEnd');
+
     // Taisām kinetic movement tādā pašā virzienā kā notika kustība
             
     // Aprēķinām hipotenūzu
@@ -117,14 +121,14 @@ function handleSwipeEnd(current, offset, stateChangeCb, doneCb, forceStopCb) {
 
     var newh, newy, newx;
 
-    console.log('kineticswipe');
+    var lastx, cx=0;
 
-    stepper.run(3000, [0.23, 1, 0.32, 1], function(p){
-        
-        console.log('kineticswipe step');
-
+    stepper.run(2000, [0.23, 1, 0.32, 1], function(p){
         // Jaunā hipotenūza
-        newh = hipotenuza + (hipotenuza)*p;
+        newh = hipotenuza + (hipotenuza*4)*p;
+
+
+
         // Jaunais y
         newy = newh * angle;
         // Jaunais x
@@ -134,7 +138,34 @@ function handleSwipeEnd(current, offset, stateChangeCb, doneCb, forceStopCb) {
         handleMove(current, {
             x: offset.x < 0 ? -1*newx : newx,
             y: offset.y < 0 ? -1*newy : newy
-        }, stateChangeCb);
+        }, function(state){
+            stateChangeCb(state)
+
+            if (typeof lastx != 'undefined') {
+                if ((Math.round(Math.abs(state.x)) - 8 < lastx) && (lastx < Math.round(Math.abs(state.x)) + 8)) {
+                    cx++;
+                }
+                else {
+                    cx = 0;
+                }
+            }
+            lastx = Math.round(Math.abs(state.x));
+
+
+            if (cx > 4) {
+                console.log('stop');
+                setTimeout(function(){
+                    stepper.stop();
+                }, 1)
+            }
+
+            
+            
+
+            console.log('tr', Math.round(state.x), lastx, cx);
+
+            
+        });
 
 
     }, doneCb, forceStopCb);
@@ -406,24 +437,21 @@ function createPinchzoom(pinchElement, pinchContainer) {
         },
         start: function() {
             // Ja notiek animācija (span in place, kinetic move), tad tā šeit tiks pārtraukta
-            console.log('start');
             if (stepper.isRunning()) {
-                console.log('forcestop');
                 isForcedEnd = true;
                 stepper.forceStop();
             }
         },
         end: function(t){
-            console.log('end');
             isForcedEnd = false;
             if (1 || t.isSwipe) {
                 // Swipe end notiek ar span in place animāciju
-                handleSwipeEnd(current, t.offset, applyNewMoveState, function(){
-                    console.log('normalend')
+                handleSwipeEnd(current, t.offset, t.speed, applyNewMoveState, function(){
+                    console.log('movend1');
                     //isForcedEnd = false;
                     handleMoveEnd(current, applyNewState);
                 }, function(){
-                    console.log('forced end')
+                    console.log('movend2');
                     isForcedEnd = true;
                     handleMoveEndForced(current, applyNewState);
                 })
@@ -434,7 +462,6 @@ function createPinchzoom(pinchElement, pinchContainer) {
             }
         },
         touchend: function(t) {
-            console.log('touchend', isForcedEnd);
             if (isForcedEnd) {
                 handleEnd(current, applyNewState);
                 isForcedEnd = false;
